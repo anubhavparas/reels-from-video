@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Reels From Video</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="header">
+        <h1>Reels From Video</h1>
+        <p>Upload a video to get clip suggestions (1-5 minutes).</p>
+      </header>
+
+      <section class="panel">
+        <form id="upload-form">
+          <label class="field">
+            <span>Video file</span>
+            <input type="file" name="video" accept="video/*" required />
+          </label>
+
+          <div class="row">
+            <label class="field">
+              <span>Min seconds</span>
+              <input type="number" name="min_seconds" value="60" min="10" max="300" />
+            </label>
+            <label class="field">
+              <span>Max seconds</span>
+              <input type="number" name="max_seconds" value="180" min="10" max="300" />
+            </label>
+            <label class="field">
+              <span>Max results</span>
+              <input type="number" name="max_results" value="5" min="1" max="20" />
+            </label>
+          </div>
+
+          <div class="row">
+            <label class="field">
+              <span>Scoring mode</span>
+              <select name="scoring_mode">
+                <option value="coherence">Coherence (internal similarity)</option>
+                <option value="topic">Topic segmentation (avoid topic shifts)</option>
+                <option value="combined" selected>Combined (both)</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Whisper model</span>
+              <select name="model_name">
+                <option value="tiny">tiny (fastest)</option>
+                <option value="base" selected>base</option>
+                <option value="small">small</option>
+                <option value="medium">medium</option>
+                <option value="large">large (most accurate)</option>
+              </select>
+            </label>
+          </div>
+
+          <label class="checkbox">
+            <input type="checkbox" name="render" value="1" />
+            <span>Render clip files</span>
+          </label>
+
+          <button type="submit">Generate clips</button>
+        </form>
+      </section>
+
+      <section class="panel">
+        <div id="status" class="status">Ready.</div>
+        <div id="results" class="results"></div>
+      </section>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

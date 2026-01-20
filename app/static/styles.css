@@ -1,0 +1,123 @@
+body {
+  margin: 0;
+  font-family: Arial, Helvetica, sans-serif;
+  background: #f5f6f8;
+  color: #1c1f24;
+}
+
+.page {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 32px;
+}
+
+.header h1 {
+  margin-bottom: 8px;
+}
+
+.panel {
+  background: #ffffff;
+  padding: 24px;
+  margin-top: 24px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.field input {
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid #c9ced6;
+}
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+button {
+  background: #1a73e8;
+  border: none;
+  color: #ffffff;
+  padding: 10px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+button:hover {
+  background: #1559b0;
+}
+
+.status {
+  margin-bottom: 16px;
+  font-weight: 600;
+}
+
+.results {
+  display: grid;
+  gap: 12px;
+}
+
+.clip {
+  border: 1px solid #e2e6ec;
+  padding: 16px;
+  border-radius: 8px;
+  background: #fafbfc;
+}
+
+.clip-header {
+  font-weight: 700;
+  font-size: 1.1em;
+  margin-bottom: 8px;
+  color: #1c1f24;
+}
+
+.clip-scores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 0.85em;
+  color: #5f6368;
+  background: #e8f0fe;
+  padding: 8px 12px;
+  border-radius: 4px;
+}
+
+.clip-text {
+  color: #3c4043;
+  line-height: 1.5;
+  margin-bottom: 12px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.download-btn {
+  display: inline-block;
+  background: #34a853;
+  color: #ffffff;
+  padding: 8px 16px;
+  border-radius: 6px;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.9em;
+}
+
+.download-btn:hover {
+  background: #2d8f47;
+}
