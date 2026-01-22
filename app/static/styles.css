@@ -209,10 +209,27 @@ body::after {
   z-index: 9999;
 }
 
+/* Top Bar */
+.top-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 12px 24px;
+}
+
+.top-bar-left {
+  display: none;
+}
+
 .page {
   max-width: 900px;
   margin: 0 auto;
-  padding: 40px 24px;
+  padding: 70px 24px 40px;
 }
 
 /* Header */
@@ -273,7 +290,7 @@ body::after {
 }
 
 .header .sub-caption {
-  margin: 8px 0 0;
+  margin: 10px 0 0;
   font-size: 0.75rem;
   color: var(--text-muted);
   font-family: var(--font-mono);
@@ -285,7 +302,7 @@ body::after {
   background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
-  margin: 4px;
+  margin: 3px;
 }
 
 /* Platform Icons */
@@ -664,7 +681,6 @@ button:active {
 
 /* How it Works Button */
 .how-it-works-btn {
-  margin-top: 10px;
   background: transparent;
   border: 1px solid var(--border-color);
   color: var(--text-secondary);
@@ -914,8 +930,23 @@ button:active {
 
 /* Responsive */
 @media (max-width: 600px) {
+  .top-bar {
+    padding: 10px 16px;
+  }
+  
+  .how-it-works-btn {
+    padding: 5px 10px;
+    font-size: 0.7rem;
+  }
+  
   .page {
-    padding: 24px 16px;
+    padding: 55px 16px 24px;
+  }
+  
+  .header .sub-caption span {
+    padding: 2px 6px;
+    font-size: 0.65rem;
+    margin: 2px;
   }
   
   .header h1 {
@@ -924,12 +955,6 @@ button:active {
   
   .header .caption {
     font-size: 0.85rem;
-  }
-  
-  .header .sub-caption span {
-    padding: 2px 6px;
-    font-size: 0.7rem;
-    margin: 2px;
   }
   
   .row {
