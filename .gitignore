@@ -1,2 +1,30 @@
-data/
-*.pyc
+# Data files (uploads and processed videos)
+data/uploads/
+data/work/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Environment variables (if you add any)
+.env
+.env.local

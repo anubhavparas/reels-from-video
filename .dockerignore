@@ -1,0 +1,31 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv
+venv/
+ENV/
+
+# Data (don't include uploaded/processed files)
+data/uploads/*
+data/work/*
+!data/uploads/.gitkeep
+!data/work/.gitkeep
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
+
+# Misc
+*.log
+*.md
+!README.md
