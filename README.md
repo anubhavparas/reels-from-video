@@ -1,3 +1,12 @@
+---
+license: apache-2.0
+title: Reels From Video
+sdk: docker
+emoji: 💻
+colorFrom: blue
+colorTo: indigo
+short_description: AI-powered clip extraction from video content
+---
 # Reels From Video
 
 AI-powered tool that extracts the best 1-5 minute clips from long-form video content. Perfect for content creators who want to turn podcasts, interviews, lectures, or vlogs into viral-ready reels and shorts.
