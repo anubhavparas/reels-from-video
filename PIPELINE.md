@@ -16,6 +16,7 @@
                     |  - FFmpeg (audio/video)   |
                     |  - Whisper (transcribe)   |
                     |  - Sentence-Transformers  |
+                    |  - OpenAI API (LLM mode)  |
                     +---------------------------+
 ```
 
@@ -29,7 +30,8 @@ USER UPLOAD
 |                         1. API ENDPOINT                                |
 |   POST /api/clip-suggestions                                          |
 |   Input: FormData { video, min_seconds, max_seconds, max_results,     |
-|                     model_name, scoring_mode, render }                 |
+|                     model_name, scoring_mode, api_key, llm_model,     |
+|                     llm_provider, ollama_url, render }                |
 +-----------------------------------------------------------------------+
     |
     v
@@ -111,6 +113,13 @@ USER UPLOAD
 |   |        - Can cross topic boundaries (with penalty)                |
 |   |        - Score: 30% text + 40% coherence + 30% distinctiveness    |
 |   |        - 0.8x penalty if crossing topic                           |
+|   +-------------------------------------------------------------------+
+|   |  MODE: "llm"        --> build_clips_llm_mode()                    |
+|   |        - Sends transcript to OpenAI GPT for segmentation          |
+|   |        - LLM identifies topics and ranks best segments            |
+|   |        - Score: 40% LLM rank + 20% text + 20% coherence           |
+|   |                + 20% distinctiveness                              |
+|   |        - Requires: api_key (OpenAI API key)                       |
 |   +-------------------------------------------------------------------+
 +-----------------------------------------------------------------------+
     |
@@ -225,6 +234,7 @@ class ClipSuggestion:
 | Audio extraction | FFmpeg | Extract audio from video | video file | audio.wav (16kHz mono) |
 | Transcription | OpenAI Whisper | Speech-to-text | audio.wav | segments with timestamps |
 | Embeddings | all-MiniLM-L6-v2 | Semantic vectors | text strings | 384-dim vectors |
+| LLM Segmentation | OpenAI/Gemini/HF/Ollama | Intelligent topic segmentation | transcript + timestamps | ranked segments |
 | Clip cutting | FFmpeg | Render video clips | video + timestamps | clip mp4 files |
 
 ## Whisper Model Options
@@ -240,17 +250,128 @@ class ClipSuggestion:
 ## Scoring Mode Comparison
 
 ```
-+------------------+------------------+------------------+
-|    COHERENCE     |      TOPIC       |    COMBINED      |
-+------------------+------------------+------------------+
-| Can cross topics | Stays in topics  | Cross with cost  |
-| 60% coherence    | 40% distinctive  | 40% coherence    |
-| Best for:        | Best for:        | Best for:        |
-| - Interviews     | - Lectures       | - General use    |
-| - Conversations  | - Tutorials      | - Mixed content  |
-| - Podcasts       | - Presentations  |                  |
-+------------------+------------------+------------------+
++------------------+------------------+------------------+------------------+
+|    COHERENCE     |      TOPIC       |    COMBINED      |       LLM        |
++------------------+------------------+------------------+------------------+
+| Can cross topics | Stays in topics  | Cross with cost  | AI-driven cuts   |
+| 60% coherence    | 40% distinctive  | 40% coherence    | 40% LLM rank     |
+| Best for:        | Best for:        | Best for:        | Best for:        |
+| - Interviews     | - Lectures       | - General use    | - Any content    |
+| - Conversations  | - Tutorials      | - Mixed content  | - High quality   |
+| - Podcasts       | - Presentations  |                  | - Smart ranking  |
+| FREE             | FREE             | FREE             | REQUIRES API KEY |
++------------------+------------------+------------------+------------------+
 ```
+
+## LLM Mode Details
+
+### How It Works
+
+```
+TRANSCRIPT WITH TIMESTAMPS
+         |
+         v
++----------------------------------+
+|   Format for LLM Input           |
+|   [0.0s - 5.2s]: Hello world...  |
+|   [5.2s - 10.1s]: Today we...    |
+|   ...                            |
++----------------------------------+
+         |
+         v
++----------------------------------+
+|   OpenAI API Call                |
+|   Model: gpt-4o-mini (default)   |
+|   Prompt: Identify top K clips   |
++----------------------------------+
+         |
+         v
++----------------------------------+
+|   LLM Response (JSON)            |
+|   [                              |
+|     {                            |
+|       "start": 30.0,             |
+|       "end": 150.0,              |
+|       "rank": 1,                 |
+|       "topic": "Main insight",   |
+|       "reason": "Key takeaway"   |
+|     },                           |
+|     ...                          |
+|   ]                              |
++----------------------------------+
+         |
+         v
++----------------------------------+
+|   Build Clips                    |
+|   - Use LLM timestamps           |
+|   - Add computed scores          |
+|   - Display topic + reason       |
++----------------------------------+
+```
+
+### LLM Prompt Template
+
+The prompt asks the LLM to:
+1. Identify distinct topics in the transcript
+2. Select top K most engaging segments
+3. Ensure clips are within duration constraints
+4. Prioritize informative, entertaining, surprising content
+5. Return JSON with start, end, rank, topic, reason
+
+### LLM Provider Options
+
+| Provider | API Key Required | Cost | Notes |
+|----------|------------------|------|-------|
+| OpenAI | Yes (sk-...) | Pay per token | Best quality, reliable |
+| Gemini | Yes (AIza...) | Free tier available | Good quality, fast |
+| HuggingFace | Yes (hf_...) | Free tier available | Open-source models |
+| Ollama | No | Free (local) | Requires local install |
+
+### LLM Model Options by Provider
+
+**OpenAI:**
+| Model | Speed | Quality | Cost |
+|-------|-------|---------|------|
+| gpt-3.5-turbo | Fastest | Good | Cheapest |
+| gpt-4o-mini | Fast | Better | Low |
+| gpt-4o | Medium | Best | Medium |
+| gpt-4-turbo | Slow | Excellent | Higher |
+
+**Google Gemini:**
+| Model | Speed | Quality | Notes |
+|-------|-------|---------|-------|
+| gemini-2.5-flash | Fast | Best value | Recommended |
+| gemini-2.0-flash | Fast | Good | Stable |
+| gemini-2.0-flash-lite | Fastest | Good | Low cost |
+| gemini-3-flash-preview | Fast | Better | Preview |
+| gemini-3-pro-preview | Medium | Best | Preview |
+
+**HuggingFace:**
+| Model | Size | Notes |
+|-------|------|-------|
+| Mixtral-8x7B-Instruct | 47B | Fast, good quality |
+| Llama-2-70b-chat | 70B | Best quality |
+| CodeLlama-34b-Instruct | 34B | Good for technical |
+
+**Ollama (Local):**
+| Model | Size | Notes |
+|-------|------|-------|
+| llama3 | 8B | Fast, good quality |
+| llama3:70b | 70B | Best quality (needs GPU) |
+| mistral | 7B | Fast |
+| mixtral | 47B | Better quality |
+| phi3 | 3.8B | Smallest, fastest |
+| gemma | 7B | Google's open model |
+
+### Ollama Setup (Optional)
+
+To use Ollama for local LLM inference:
+
+1. Install Ollama: https://ollama.ai
+2. Start the server: `ollama serve`
+3. Pull a model: `ollama pull llama3`
+4. Select "Ollama (Local)" in the UI
+5. No API key needed - runs entirely on your machine
 
 ## File Structure
 
@@ -289,6 +410,12 @@ reels_from_video/
 | No transcript segments | Uses time-based clips |
 | Clip too short | Skipped, extends to next segment |
 | Topic block too short | Skipped in topic mode |
+| LLM mode without API key | Returns error: "LLM mode with {provider} requires an API key" |
+| OpenAI API error | Falls back to combined mode with warning |
+| Gemini API error | Falls back to combined mode with warning |
+| HuggingFace API error | Falls back to combined mode with warning |
+| Ollama not running | Returns error: "Ollama not running. Start with: ollama serve" |
+| LLM response parse failure | Falls back to combined mode with warning |
 
 ## Performance Considerations
 

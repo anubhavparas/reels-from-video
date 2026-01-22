@@ -5,12 +5,49 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Reels From Video</title>
     <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+      :root { --font-mono: "JetBrains Mono", "SF Mono", "Fira Code", Menlo, Consolas, monospace; }
+    </style>
   </head>
   <body>
+    <!-- Animated background -->
+    <div class="bg-animation">
+      <div class="orb orb-1"></div>
+      <div class="orb orb-2"></div>
+      <div class="orb orb-3"></div>
+      <div class="orb orb-4"></div>
+      <div class="particles">
+        <div class="particle"></div>
+        <div class="particle"></div>
+        <div class="particle"></div>
+        <div class="particle"></div>
+        <div class="particle"></div>
+        <div class="particle"></div>
+        <div class="particle"></div>
+        <div class="particle"></div>
+        <div class="particle"></div>
+        <div class="particle"></div>
+        <div class="particle"></div>
+        <div class="particle"></div>
+        <div class="particle"></div>
+        <div class="particle"></div>
+        <div class="particle"></div>
+      </div>
+    </div>
+
     <div class="page">
       <header class="header">
-        <h1>Reels From Video</h1>
-        <p>Upload a video to get clip suggestions (1-5 minutes).</p>
+        <h1>// Reels From Video</h1>
+        <p class="tagline">AI-powered clip extraction from video content</p>
+        <p class="caption">Turn hours into highlights. Your next viral moment is one click away.</p>
+        <p class="sub-caption">
+          <span>#reels</span>
+          <span>#shorts</span>
+          <span>#content</span>
+        </p>
       </header>
 
       <section class="panel">
@@ -38,10 +75,11 @@
           <div class="row">
             <label class="field">
               <span>Scoring mode</span>
-              <select name="scoring_mode">
+              <select name="scoring_mode" id="scoring-mode">
                 <option value="coherence">Coherence (internal similarity)</option>
                 <option value="topic">Topic segmentation (avoid topic shifts)</option>
                 <option value="combined" selected>Combined (both)</option>
+                <option value="llm">LLM (GPT-based segmentation)</option>
               </select>
             </label>
             <label class="field">
@@ -56,17 +94,52 @@
             </label>
           </div>
 
+          <div id="llm-options" class="llm-options" style="display: none;">
+            <div class="row">
+              <label class="field">
+                <span>LLM Provider</span>
+                <select name="llm_provider" id="llm-provider">
+                  <option value="openai" selected>OpenAI (GPT)</option>
+                  <option value="gemini">Google Gemini</option>
+                  <option value="huggingface">HuggingFace</option>
+                  <option value="ollama">Ollama (Local)</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>LLM Model</span>
+                <select name="llm_model" id="llm-model">
+                  <!-- OpenAI models (default) -->
+                  <option value="gpt-4o-mini" selected>gpt-4o-mini (fast, cheap)</option>
+                  <option value="gpt-4o">gpt-4o (best quality)</option>
+                  <option value="gpt-4-turbo">gpt-4-turbo</option>
+                  <option value="gpt-3.5-turbo">gpt-3.5-turbo (fastest)</option>
+                </select>
+              </label>
+            </div>
+            <div class="row">
+              <label class="field" id="api-key-field">
+                <span id="api-key-label">API Key</span>
+                <input type="password" name="api_key" id="api-key-input" placeholder="sk-..." />
+              </label>
+              <label class="field" id="ollama-url-field" style="display: none;">
+                <span>Ollama URL</span>
+                <input type="text" name="ollama_url" value="http://127.0.0.1:11434" />
+              </label>
+            </div>
+            <p class="hint" id="llm-hint">LLM mode sends transcript to the selected provider for intelligent topic segmentation and ranking.</p>
+          </div>
+
           <label class="checkbox">
             <input type="checkbox" name="render" value="1" />
             <span>Render clip files</span>
           </label>
 
-          <button type="submit">Generate clips</button>
+          <button type="submit">Generate Clips</button>
         </form>
       </section>
 
       <section class="panel">
-        <div id="status" class="status">Ready.</div>
+        <div id="status" class="status">// Ready to process</div>
         <div id="results" class="results"></div>
       </section>
     </div>

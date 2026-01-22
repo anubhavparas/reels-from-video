@@ -1,4 +1,6 @@
 import importlib.util
+import json
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -7,6 +9,37 @@ from typing import Optional
 import numpy as np
 
 from .utils import command_exists, extract_audio, get_duration_seconds
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
+
+def _has_openai() -> bool:
+    return importlib.util.find_spec("openai") is not None
+
+
+def _has_google_genai() -> bool:
+    return importlib.util.find_spec("google.generativeai") is not None
+
+
+def _has_huggingface_hub() -> bool:
+    return importlib.util.find_spec("huggingface_hub") is not None
+
+
+def _has_requests() -> bool:
+    return importlib.util.find_spec("requests") is not None
+
+
+# LLM Provider constants
+LLM_PROVIDER_OPENAI = "openai"
+LLM_PROVIDER_GEMINI = "gemini"
+LLM_PROVIDER_HUGGINGFACE = "huggingface"
+LLM_PROVIDER_OLLAMA = "ollama"
 
 
 FILLER_WORDS = {
@@ -91,8 +124,22 @@ def transcribe_video(
 
     import whisper
 
+    logger.info("=" * 60)
+    logger.info("WHISPER TRANSCRIPTION")
+    logger.info("=" * 60)
+    logger.info(f"Loading Whisper model: {model_name}")
+
     model = whisper.load_model(model_name)
     result = model.transcribe(audio_path)
+
+    logger.info(f"Whisper returned {len(result.get('segments', []))} segments")
+    logger.info("-" * 40)
+    logger.info("WHISPER OUTPUT (first 10 segments):")
+    for i, seg in enumerate(result.get("segments", [])[:10]):
+        logger.info(f"  [{seg.get('start', 0):.1f}s - {seg.get('end', 0):.1f}s]: {seg.get('text', '')[:80]}...")
+    if len(result.get("segments", [])) > 10:
+        logger.info(f"  ... and {len(result.get('segments', [])) - 10} more segments")
+    logger.info("-" * 40)
 
     results: list[TranscriptSegment] = []
     for segment in result.get("segments", []):
@@ -591,6 +638,457 @@ def build_time_based_clips(
     return clips
 
 
+# =============================================================================
+# LLM-BASED SEGMENTATION
+# =============================================================================
+
+def _format_transcript_for_llm(
+    segments: list[TranscriptSegment],
+    max_chars: int = 12000,
+) -> str:
+    """Format transcript with timestamps for LLM input."""
+    lines = []
+    total_chars = 0
+
+    for seg in segments:
+        line = f"[{seg.start:.1f}s - {seg.end:.1f}s]: {seg.text}"
+        if total_chars + len(line) > max_chars:
+            lines.append("... (transcript truncated)")
+            break
+        lines.append(line)
+        total_chars += len(line) + 1
+
+    return "\n".join(lines)
+
+
+def _build_llm_prompt(
+    transcript: str,
+    min_seconds: int,
+    max_seconds: int,
+    max_results: int,
+) -> str:
+    """Build the prompt for LLM-based segmentation."""
+    target_duration = (min_seconds + max_seconds) // 2
+    return f"""You are analyzing a video transcript to identify the best clip segments for social media content.
+
+TRANSCRIPT WITH TIMESTAMPS:
+{transcript}
+
+CRITICAL DURATION REQUIREMENTS:
+- MINIMUM duration: {min_seconds} seconds (MUST be at least this long)
+- MAXIMUM duration: {max_seconds} seconds
+- TARGET duration: around {target_duration} seconds per clip
+- DO NOT return any segment shorter than {min_seconds} seconds
+
+TASK:
+1. Identify distinct topics or coherent segments in the transcript, basically check where a new topic starts or ends
+2. Select the top {max_results} most engaging segments
+3. Each segment MUST not be longer than {max_seconds} seconds
+4. Prefer LONGER segments that cover complete topics over short snippets
+5. Combine related content to reach the minimum duration if needed
+6. Prioritize segments that are: informative, entertaining, surprising, or emotionally engaging
+7. Make sure that the output segments do not overlap with each other by more than 20% of the segment duration
+
+RESPOND WITH ONLY A JSON ARRAY (no other text):
+[
+  {{
+    "start": <start_time_in_seconds>,
+    "end": <end_time_in_seconds>,
+    "rank": <1_to_{max_results}_where_1_is_best>,
+    "topic": "<brief_topic_description>",
+    "reason": "<why_this_segment_is_engaging>"
+  }},
+  ...
+]
+
+REQUIREMENTS:
+- Each segment MUST have (end - start) >= {min_seconds} seconds
+- Use the exact timestamps from the transcript
+- Ensure start and end times align with sentence boundaries
+- Return exactly {max_results} segments (or fewer if not enough content)
+- Segments should not overlap significantly
+- JSON must be valid and parseable
+- If the start of a segment's topic is not matching the timestamps of the transcript, you can adjust the start time to match the transcript. For example, if the segment starts at 10.0 seconds but the topic starts at 15.0 seconds, you can adjust the start time to 15.0 seconds based on the transcript maximum duration.
+
+EXAMPLE: If min_seconds={min_seconds}, a valid segment would be:
+{{"start": 10.0, "end": {10.0 + min_seconds + 30}, "rank": 1, "topic": "...", "reason": "..."}}"""
+
+
+@dataclass
+class LLMSegment:
+    start: float
+    end: float
+    rank: int
+    topic: str
+    reason: str
+
+
+def _parse_llm_response(response_text: str) -> list[LLMSegment]:
+    """Parse the LLM response into segments."""
+    # Try to extract JSON from the response
+    response_text = response_text.strip()
+
+    # Handle markdown code blocks
+    if "```json" in response_text:
+        start = response_text.find("```json") + 7
+        end = response_text.find("```", start)
+        response_text = response_text[start:end].strip()
+    elif "```" in response_text:
+        start = response_text.find("```") + 3
+        end = response_text.find("```", start)
+        response_text = response_text[start:end].strip()
+
+    # Find JSON array
+    if "[" in response_text:
+        start = response_text.find("[")
+        end = response_text.rfind("]") + 1
+        response_text = response_text[start:end]
+
+    try:
+        data = json.loads(response_text)
+        segments = []
+        for item in data:
+            segments.append(
+                LLMSegment(
+                    start=float(item.get("start", 0)),
+                    end=float(item.get("end", 0)),
+                    rank=int(item.get("rank", 1)),
+                    topic=str(item.get("topic", "")),
+                    reason=str(item.get("reason", "")),
+                )
+            )
+        return segments
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        return []
+
+
+def _call_openai(
+    prompt: str,
+    system_prompt: str,
+    api_key: str,
+    model: str,
+) -> tuple[str, Optional[str]]:
+    """Call OpenAI API."""
+    if not _has_openai():
+        return "", "openai package not installed"
+
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.3,
+            max_tokens=2000,
+        )
+        return response.choices[0].message.content or "", None
+    except Exception as e:
+        return "", f"OpenAI API error: {str(e)}"
+
+
+def _call_gemini(
+    prompt: str,
+    system_prompt: str,
+    api_key: str,
+    model: str,
+) -> tuple[str, Optional[str]]:
+    """Call Google Gemini API."""
+    if not _has_google_genai():
+        return "", "google-generativeai package not installed"
+
+    try:
+        import google.generativeai as genai
+
+        genai.configure(api_key=api_key)
+        gen_model = genai.GenerativeModel(model)
+
+        full_prompt = f"{system_prompt}\n\n{prompt}"
+        response = gen_model.generate_content(
+            full_prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.3,
+                max_output_tokens=2000,
+            ),
+        )
+        return response.text or "", None
+    except Exception as e:
+        return "", f"Gemini API error: {str(e)}"
+
+
+def _call_huggingface(
+    prompt: str,
+    system_prompt: str,
+    api_key: str,
+    model: str,
+) -> tuple[str, Optional[str]]:
+    """Call HuggingFace Inference API."""
+    if not _has_huggingface_hub():
+        return "", "huggingface_hub package not installed"
+
+    try:
+        from huggingface_hub import InferenceClient
+
+        client = InferenceClient(token=api_key)
+
+        full_prompt = f"{system_prompt}\n\n{prompt}"
+        response = client.text_generation(
+            full_prompt,
+            model=model,
+            max_new_tokens=2000,
+            temperature=0.3,
+        )
+        return response or "", None
+    except Exception as e:
+        return "", f"HuggingFace API error: {str(e)}"
+
+
+def _call_ollama(
+    prompt: str,
+    system_prompt: str,
+    model: str,
+    ollama_url: str = "http://127.0.0.1:11434",
+) -> tuple[str, Optional[str]]:
+    """Call local Ollama API."""
+    if not _has_requests():
+        return "", "requests package not installed"
+
+    try:
+        import requests
+
+        response = requests.post(
+            f"{ollama_url}/api/generate",
+            json={
+                "model": model,
+                "prompt": f"{system_prompt}\n\n{prompt}",
+                "stream": False,
+                "options": {
+                    "temperature": 0.3,
+                    "num_predict": 2000,
+                },
+            },
+            timeout=120,
+        )
+
+        if response.status_code != 200:
+            return "", f"Ollama error: HTTP {response.status_code}"
+
+        data = response.json()
+        return data.get("response", ""), None
+    except requests.exceptions.ConnectionError:
+        return "", "Ollama not running. Start with: ollama serve"
+    except Exception as e:
+        return "", f"Ollama API error: {str(e)}"
+
+
+def call_llm_for_segmentation(
+    segments: list[TranscriptSegment],
+    min_seconds: int,
+    max_seconds: int,
+    max_results: int,
+    api_key: str,
+    llm_model: str = "gpt-4o-mini",
+    llm_provider: str = LLM_PROVIDER_OPENAI,
+    ollama_url: str = "http://127.0.0.1:11434",
+) -> tuple[list[LLMSegment], Optional[str]]:
+    """Call LLM API to get segment suggestions. Supports multiple providers."""
+    transcript = _format_transcript_for_llm(segments)
+    prompt = _build_llm_prompt(transcript, min_seconds, max_seconds, max_results)
+    system_prompt = "You are an expert video editor who identifies the most engaging clips from video transcripts. Always respond with valid JSON only."
+
+    # Log LLM input
+    logger.info("=" * 60)
+    logger.info("LLM INPUT")
+    logger.info("=" * 60)
+    logger.info(f"Provider: {llm_provider}")
+    logger.info(f"Model: {llm_model}")
+    logger.info(f"Min seconds: {min_seconds}, Max seconds: {max_seconds}, Max results: {max_results}")
+    logger.info("-" * 40)
+    logger.info("PROMPT (first 2000 chars):")
+    logger.info(prompt[:2000])
+    if len(prompt) > 2000:
+        logger.info(f"... (truncated, total {len(prompt)} chars)")
+    logger.info("-" * 40)
+
+    # Route to appropriate provider
+    if llm_provider == LLM_PROVIDER_OPENAI:
+        if not api_key:
+            return [], "OpenAI API key not provided"
+        response_text, error = _call_openai(prompt, system_prompt, api_key, llm_model)
+
+    elif llm_provider == LLM_PROVIDER_GEMINI:
+        if not api_key:
+            return [], "Gemini API key not provided"
+        response_text, error = _call_gemini(prompt, system_prompt, api_key, llm_model)
+
+    elif llm_provider == LLM_PROVIDER_HUGGINGFACE:
+        if not api_key:
+            return [], "HuggingFace API token not provided"
+        response_text, error = _call_huggingface(prompt, system_prompt, api_key, llm_model)
+
+    elif llm_provider == LLM_PROVIDER_OLLAMA:
+        # Ollama is local, no API key needed
+        response_text, error = _call_ollama(prompt, system_prompt, llm_model, ollama_url)
+
+    else:
+        return [], f"Unknown LLM provider: {llm_provider}"
+
+    # Log LLM output
+    logger.info("=" * 60)
+    logger.info("LLM OUTPUT")
+    logger.info("=" * 60)
+    if error:
+        logger.error(f"LLM Error: {error}")
+        return [], error
+
+    logger.info("RAW RESPONSE:")
+    logger.info(response_text)
+    logger.info("-" * 40)
+
+    llm_segments = _parse_llm_response(response_text)
+
+    if not llm_segments:
+        logger.error("Failed to parse LLM response into segments")
+        return [], "Failed to parse LLM response"
+
+    logger.info(f"PARSED {len(llm_segments)} SEGMENTS:")
+    for seg in llm_segments:
+        duration = seg.end - seg.start
+        logger.info(f"  Rank {seg.rank}: [{seg.start:.1f}s - {seg.end:.1f}s] ({duration:.1f}s) - {seg.topic}")
+    logger.info("=" * 60)
+
+    return llm_segments, None
+
+
+def build_clips_llm_mode(
+    segments: list[TranscriptSegment],
+    llm_segments: list[LLMSegment],
+    all_segments: list[TranscriptSegment],
+    min_seconds: int = 60,
+    max_seconds: int = 300,
+) -> list[ClipSuggestion]:
+    """
+    Build clips based on LLM suggestions.
+    Uses LLM-provided boundaries and adds computed scores.
+    Extends short clips to meet minimum duration.
+    """
+    if not llm_segments:
+        return []
+
+    candidates: list[ClipSuggestion] = []
+
+    for llm_seg in llm_segments:
+        # Find segments within the LLM-suggested time range
+        clip_segments = [
+            seg for seg in segments
+            if seg.start >= llm_seg.start - 1.0 and seg.end <= llm_seg.end + 1.0
+        ]
+
+        if not clip_segments:
+            # Use the LLM boundaries directly
+            duration = llm_seg.end - llm_seg.start
+            # Extend if too short
+            if duration < min_seconds:
+                # Try to extend by adding nearby content
+                center = (llm_seg.start + llm_seg.end) / 2
+                half_target = min_seconds / 2 + 5  # Add buffer
+                llm_seg.start = max(0, center - half_target)
+                llm_seg.end = center + half_target
+
+            text = llm_seg.topic + ": " + llm_seg.reason
+            candidates.append(
+                ClipSuggestion(
+                    start=llm_seg.start,
+                    end=llm_seg.end,
+                    score=round(1.0 - (llm_seg.rank - 1) * 0.1, 3),
+                    text=text,
+                    text_score=0.0,
+                    coherence_score=0.0,
+                    distinctiveness_score=0.0,
+                )
+            )
+            continue
+
+        # Compute actual boundaries from segments
+        start = min(seg.start for seg in clip_segments)
+        end = max(seg.end for seg in clip_segments)
+
+        # Extend clip if too short by including more adjacent segments
+        duration = end - start
+        if duration < min_seconds and segments:
+            # Find the index range of current clip segments
+            all_indices = [i for i, seg in enumerate(segments) if seg in clip_segments]
+            if all_indices:
+                first_idx = min(all_indices)
+                last_idx = max(all_indices)
+
+                # Extend backwards and forwards until we reach min_seconds
+                while duration < min_seconds:
+                    extended = False
+                    # Try extending backwards
+                    if first_idx > 0:
+                        first_idx -= 1
+                        clip_segments.insert(0, segments[first_idx])
+                        start = segments[first_idx].start
+                        extended = True
+                    # Try extending forwards
+                    if last_idx < len(segments) - 1:
+                        last_idx += 1
+                        clip_segments.append(segments[last_idx])
+                        end = segments[last_idx].end
+                        extended = True
+
+                    duration = end - start
+                    if not extended:
+                        break
+
+                    # Safety cap
+                    if duration > max_seconds:
+                        break
+
+        text = " ".join(seg.text for seg in clip_segments).strip()
+
+        # Compute scores if embeddings available
+        text_score = score_text(text)
+        coherence = score_coherence(clip_segments)
+        distinctiveness = score_distinctiveness(clip_segments, all_segments)
+
+        # LLM rank contributes to score (rank 1 = highest)
+        llm_score = 1.0 - (llm_seg.rank - 1) * 0.1
+        text_norm = min(text_score / 100.0, 2.0)
+
+        combined = (
+            llm_score * 0.4  # LLM ranking is important
+            + text_norm * 0.2
+            + coherence * 0.2
+            + distinctiveness * 0.2
+        )
+
+        # Add topic/reason to text for display
+        display_text = f"[{llm_seg.topic}] {text[:300]}"
+        if llm_seg.reason:
+            display_text += f" | Reason: {llm_seg.reason}"
+
+        candidates.append(
+            ClipSuggestion(
+                start=start,
+                end=end,
+                score=round(combined, 3),
+                text=display_text[:400],
+                text_score=round(text_score, 2),
+                coherence_score=round(coherence, 3),
+                distinctiveness_score=round(distinctiveness, 3),
+            )
+        )
+
+    # Sort by score (which incorporates LLM rank)
+    candidates.sort(key=lambda c: c.score, reverse=True)
+    return candidates
+
+
 def suggest_clips(
     video_path: str,
     work_dir: str,
@@ -599,6 +1097,10 @@ def suggest_clips(
     max_results: int,
     model_name: str,
     scoring_mode: str = "combined",
+    api_key: str = "",
+    llm_model: str = "gpt-4o-mini",
+    llm_provider: str = LLM_PROVIDER_OPENAI,
+    ollama_url: str = "http://127.0.0.1:11434",
 ) -> tuple[list[ClipSuggestion], Optional[str]]:
     """
     Generate clip suggestions from a video.
@@ -607,11 +1109,50 @@ def suggest_clips(
     - "coherence": Prioritize internal coherence (sentences relate to each other)
     - "topic": Prioritize staying within topic boundaries
     - "combined": Balance both coherence and topic segmentation
+    - "llm": Use LLM to identify and rank segments
+
+    llm_provider options:
+    - "openai": OpenAI GPT models (requires API key)
+    - "gemini": Google Gemini models (requires API key)
+    - "huggingface": HuggingFace Inference API (requires API token)
+    - "ollama": Local Ollama instance (no API key needed)
     """
     duration = get_duration_seconds(video_path)
     segments, warning = transcribe_video(video_path, work_dir, model_name)
 
     if segments:
+        # LLM mode - use LLM to segment and rank
+        if scoring_mode == "llm":
+            # Ollama doesn't need an API key
+            if llm_provider != LLM_PROVIDER_OLLAMA and not api_key:
+                return [], f"LLM mode with {llm_provider} requires an API key"
+
+            # Compute embeddings for scoring (optional but helpful)
+            if _has_sentence_transformers():
+                compute_embeddings(segments)
+
+            llm_segments, llm_error = call_llm_for_segmentation(
+                segments,
+                min_seconds,
+                max_seconds,
+                max_results,
+                api_key,
+                llm_model,
+                llm_provider,
+                ollama_url,
+            )
+
+            if llm_error:
+                # Fallback to combined mode on LLM error
+                warning = warning or ""
+                warning += f" LLM error: {llm_error}. Falling back to combined mode."
+                # Fall through to combined mode below
+            else:
+                clips = build_clips_llm_mode(
+                    segments, llm_segments, segments, min_seconds, max_seconds
+                )
+                return clips, warning
+
         # Try embedding-based scoring if sentence-transformers is available
         if _has_sentence_transformers():
             compute_embeddings(segments)
@@ -628,7 +1169,7 @@ def suggest_clips(
                     segments, topic_blocks, min_seconds, max_seconds, max_results
                 )
                 return clips, warning
-            else:  # combined
+            else:  # combined (or fallback from LLM error)
                 clips = build_clips_combined_mode(
                     segments, topic_blocks, min_seconds, max_seconds, max_results
                 )

@@ -1,5 +1,7 @@
 import os
+import re
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -28,6 +30,27 @@ app.mount("/media", StaticFiles(directory=str(DATA_DIR)), name="media")
 
 def _safe_int(value: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, value))
+
+
+def _sanitize_filename(filename: str) -> str:
+    """Remove extension and sanitize filename for use in folder name."""
+    # Remove extension
+    name = os.path.splitext(filename)[0]
+    # Replace spaces and special chars with underscores
+    name = re.sub(r"[^\w\-]", "_", name)
+    # Collapse multiple underscores
+    name = re.sub(r"_+", "_", name)
+    # Trim and limit length
+    name = name.strip("_")[:30]
+    return name or "video"
+
+
+def _generate_folder_name(filename: str) -> str:
+    """Generate a folder name with timestamp and video name."""
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    video_name = _sanitize_filename(filename)
+    short_id = uuid.uuid4().hex[:6]
+    return f"{timestamp}_{video_name}_{short_id}"
 
 
 async def _save_upload(file: UploadFile, dest_path: Path) -> None:
@@ -64,6 +87,10 @@ async def clip_suggestions(
     max_results: int = Form(5),
     model_name: str = Form("base"),
     scoring_mode: str = Form("combined"),
+    api_key: str = Form(""),
+    llm_model: str = Form("gpt-4o-mini"),
+    llm_provider: str = Form("openai"),
+    ollama_url: str = Form("http://127.0.0.1:11434"),
     render: int = Form(0),
 ) -> JSONResponse:
     if not video.filename:
@@ -73,13 +100,24 @@ async def clip_suggestions(
     max_seconds = _safe_int(max_seconds, min_seconds, 300)
     max_results = _safe_int(max_results, 1, 20)
 
-    if scoring_mode not in ("coherence", "topic", "combined"):
+    if scoring_mode not in ("coherence", "topic", "combined", "llm"):
         scoring_mode = "combined"
 
-    request_id = uuid.uuid4().hex
+    valid_providers = ("openai", "gemini", "huggingface", "ollama")
+    if llm_provider not in valid_providers:
+        llm_provider = "openai"
+
+    # Ollama is local, no API key needed
+    if scoring_mode == "llm" and llm_provider != "ollama" and not api_key:
+        raise HTTPException(
+            status_code=400,
+            detail=f"LLM mode with {llm_provider} requires an API key",
+        )
+
+    folder_name = _generate_folder_name(video.filename)
     file_ext = os.path.splitext(video.filename)[1] or ".mp4"
-    video_path = UPLOAD_DIR / f"{request_id}{file_ext}"
-    work_dir = WORK_DIR / request_id
+    video_path = UPLOAD_DIR / f"{folder_name}{file_ext}"
+    work_dir = WORK_DIR / folder_name
     ensure_dir(str(work_dir))
 
     await _save_upload(video, video_path)
@@ -92,6 +130,10 @@ async def clip_suggestions(
         max_results=max_results,
         model_name=model_name,
         scoring_mode=scoring_mode,
+        api_key=api_key,
+        llm_model=llm_model,
+        llm_provider=llm_provider,
+        ollama_url=ollama_url,
     )
 
     if not clips:
@@ -111,7 +153,7 @@ async def clip_suggestions(
             output_name = f"clip_{idx + 1}.mp4"
             output_path = clips_dir / output_name
             cut_clip(str(video_path), str(output_path), clip.start, clip.end)
-            response_clips[idx]["file"] = f"/media/work/{request_id}/clips/{output_name}"
+            response_clips[idx]["file"] = f"/media/work/{folder_name}/clips/{output_name}"
 
     return JSONResponse(
         {
