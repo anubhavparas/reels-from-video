@@ -88,7 +88,7 @@ const providerHints = {
   openai: "Uses OpenAI API. Requires an API key from platform.openai.com",
   gemini: "Uses Google Gemini API. Requires an API key from ai.google.dev",
   huggingface: "Uses HuggingFace Inference API. Requires a token from huggingface.co",
-  ollama: "Uses local Ollama instance. No API key needed. Start with: ollama serve",
+  ollama: "LOCAL ONLY: Ollama runs on your machine. Not available on hosted deployments. Clone the project and run locally to use Ollama. Start with: ollama serve",
 };
 
 // Update model dropdown when provider changes
@@ -129,6 +129,13 @@ const updateModelOptions = () => {
 
   // Update hint text
   llmHint.textContent = providerHints[provider] || "";
+  
+  // Add special styling for Ollama local-only notice
+  if (provider === "ollama") {
+    llmHint.classList.add("local-only");
+  } else {
+    llmHint.classList.remove("local-only");
+  }
 };
 
 // Show/hide LLM options based on scoring mode

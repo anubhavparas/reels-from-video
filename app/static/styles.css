@@ -569,6 +569,15 @@ button:active {
   font-size: 0.85rem;
   color: var(--warning-text);
   font-family: var(--font-mono);
+  transition: all 0.3s ease;
+}
+
+.llm-options .hint.local-only {
+  background: rgba(136, 136, 136, 0.15);
+  border: 1px solid #666;
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  color: #aaa;
 }
 
 .llm-options .security-note {
