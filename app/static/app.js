@@ -10,6 +10,37 @@ const apiKeyLabel = document.getElementById("api-key-label");
 const apiKeyInput = document.getElementById("api-key-input");
 const ollamaUrlField = document.getElementById("ollama-url-field");
 const llmHint = document.getElementById("llm-hint");
+const securityNote = document.getElementById("security-note");
+
+// Modal elements
+const howItWorksBtn = document.getElementById("how-it-works-btn");
+const pipelineModal = document.getElementById("pipeline-modal");
+const modalClose = document.getElementById("modal-close");
+
+// Modal open/close handlers
+howItWorksBtn.addEventListener("click", () => {
+  pipelineModal.classList.add("active");
+  document.body.style.overflow = "hidden";
+});
+
+modalClose.addEventListener("click", () => {
+  pipelineModal.classList.remove("active");
+  document.body.style.overflow = "";
+});
+
+pipelineModal.addEventListener("click", (e) => {
+  if (e.target === pipelineModal) {
+    pipelineModal.classList.remove("active");
+    document.body.style.overflow = "";
+  }
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && pipelineModal.classList.contains("active")) {
+    pipelineModal.classList.remove("active");
+    document.body.style.overflow = "";
+  }
+});
 
 // Model options for each provider
 const providerModels = {
@@ -78,9 +109,11 @@ const updateModelOptions = () => {
   if (provider === "ollama") {
     apiKeyField.style.display = "none";
     ollamaUrlField.style.display = "block";
+    securityNote.style.display = "none"; // No API key needed for Ollama
   } else {
     apiKeyField.style.display = "block";
     ollamaUrlField.style.display = "none";
+    securityNote.style.display = "flex"; // Show security note when API key is needed
 
     if (provider === "openai") {
       apiKeyLabel.textContent = "OpenAI API Key";
